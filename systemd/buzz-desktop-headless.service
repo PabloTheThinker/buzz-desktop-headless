@@ -1,0 +1,19 @@
+[Unit]
+Description=Buzz Desktop headless stack (Xvfb + noVNC)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Environment=BD_BIND=127.0.0.1
+Environment=BD_DISPLAY=101
+Environment=BD_VNC_PORT=5911
+Environment=BD_NOVNC_PORT=6180
+# Optional: point Desktop at a remote relay
+# Environment=BUZZ_RELAY_URL=ws://127.0.0.1:3000
+ExecStart=%h/.local/bin/buzz-desktop-headless start
+ExecStop=%h/.local/bin/buzz-desktop-headless stop
+
+[Install]
+WantedBy=default.target

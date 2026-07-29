@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# buzz-desktop-headless — Buzz Desktop on headless Linux
+# Stack: Xvfb + dbus + WM + buzz-desktop + x11vnc + noVNC
+set -euo pipefail
+
+_SELF="${BASH_SOURCE[0]}"
+while [[ -L "$_SELF" ]]; do
+  _dir="$(cd -P "$(dirname "$_SELF")" && pwd)"
+  _SELF="$(readlink "$_SELF")"
+  [[ "$_SELF" != /* ]] && _SELF="$_dir/$_SELF"
+done
+ROOT="$(cd "$(dirname "$_SELF")/.." && pwd)"
+# shellcheck source=../lib/common.sh
+source "$ROOT/lib/common.sh"
+
+VERSION="$(cat "$ROOT/VERSION" 2>/dev/null || echo '0.0.0-dev')"
+
+usage() {
+  cat <<EOF
+buzz-desktop-headless ${VERSION}
+Run Buzz Desktop on headless Linux (Xvfb + noVNC).
+
+Usage:
+  buzz-desktop-headless <command> [options]
+
+Commands:
+  start [--foreground] [--no-vnc] [--bind ADDR] [--display N]
+  stop
+  restart [start-options...]
+  restart-vnc              # re-apply pointer-fidelity VNC flags only
+  status
+  screenshot [path.png]
+  split [right|left|up|down]   # Open in split (no drag; needs xdotool)
+  new-tab                      # Ctrl+T new session tab (needs xdotool)
+  url
+  doctor [--install-hints]
+  version
+  help
+
+Environment (optional):
+  BD_DISPLAY=101                 X display number
+  BD_GEOMETRY=1920x1080x24      Xvfb geometry
+  BD_VNC_PORT=5911              RFB port
+  BD_NOVNC_PORT=6180            Browser UI port
+  BD_BIND=127.0.0.1             Listen address (localhost only by default)
+  BD_STATE_DIR=\$XDG_STATE_HOME/buzz-desktop-headless
+  BD_BUZZ_CMD=buzz-desktop
+  BUZZ_RELAY_URL=ws://…          Optional remote Buzz relay
+  BUZZ_AUTO_CONNECT_DEFAULT_RELAY=1  Auto-join non-local relay
+  BD_VNC_PASSWORD_FILE=path     Required if BD_BIND is not loopback
+  BD_NOVNC_WEB=path             Override noVNC web root
+  BD_WM=fluxbox|openbox|icewm   Preferred window manager
+  BD_WAIT_BUZZ_SEC=60         Electron ready timeout
+  BD_POINTER_MODE=1             x11vnc -pointer_mode (drag fidelity)
+  BD_VNC_DEFER_MS=1             x11vnc -defer (lower = snappier drag)
+  BD_VNC_WAIT_MS=5              x11vnc -wait poll interval
+  BD_X11VNC_EXTRA='...'         Extra raw x11vnc flags
+
+Security: binds 127.0.0.1 by default. Reach via SSH tunnel or mesh VPN.
+  ssh -N -L 6180:127.0.0.1:6180 user@host
+  open the printed noVNC URL (includes drag-friendly query params)
+
+Buzz backend (optional):
+  Point Desktop at a remote relay with BUZZ_RELAY_URL=ws://host:3000
+  Headless stack only provides the GUI; relay/agents run separately.
+EOF
+}
+
+cmd="${1:-help}"
+shift || true
+
+case "$cmd" in
+  start)      bd_start "$@" ;;
+  stop)       bd_stop ;;
+  restart)    bd_stop || true; bd_start "$@" ;;
+  restart-vnc|vnc-restart) bd_restart_vnc ;;
+  status)     bd_status ;;
+  shot|screenshot) bd_screenshot "$@" ;;
+  split|tile) bd_split "$@" ;;
+  new-tab|newtab|tab) bd_new_tab ;;
+  url)        bd_print_urls ;;
+  doctor)     bd_doctor "$@" ;;
+  version|--version|-V) echo "buzz-desktop-headless ${VERSION}" ;;
+  -h|--help|help) usage ;;
+  *)
+    echo "unknown command: $cmd" >&2
+    usage >&2
+    exit 1
+    ;;
+esac
