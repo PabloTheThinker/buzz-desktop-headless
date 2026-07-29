@@ -79,6 +79,197 @@ buzz-desktop-headless start
 
 ---
 
+## Examples
+
+Copy-paste recipes. Replace `user@server` with your SSH target. All GUI ports stay on **localhost** unless you deliberately change `BD_BIND`.
+
+### 1) First boot on a fresh Ubuntu VPS
+
+```bash
+# on the server
+sudo apt-get update
+git clone https://github.com/PabloTheThinker/buzz-desktop-headless.git
+cd buzz-desktop-headless
+./scripts/install.sh --packages
+
+# install Buzz Desktop your usual way, then point at the real binary:
+export BD_BUZZ_CMD=/usr/bin/buzz-desktop   # or: $(command -v buzz-desktop)
+
+buzz-desktop-headless doctor --install-hints
+buzz-desktop-headless start
+buzz-desktop-headless status
+buzz-desktop-headless url
+```
+
+```bash
+# on your laptop
+ssh -N -L 6180:127.0.0.1:6180 -L 5911:127.0.0.1:5911 user@server
+# browser → http://127.0.0.1:6180/vnc.html?autoconnect=1&resize=remote
+```
+
+### 2) Everyday ops (already installed)
+
+```bash
+buzz-desktop-headless status          # what’s up?
+buzz-desktop-headless url             # tunnel + noVNC hints
+buzz-desktop-headless screenshot ~/buzz-desk.png
+buzz-desktop-headless restart         # bounce whole stack
+buzz-desktop-headless restart-vnc     # only refresh x11vnc flags
+buzz-desktop-headless stop
+```
+
+### 3) Desktop + local buzz-relay on the same host
+
+Relay is **separate** — start it yourself, then hand the URL to Desktop:
+
+```bash
+# terminal A — your relay (example ports; use whatever your relay docs say)
+# buzz-relay  # or docker compose up -d
+curl -sS http://127.0.0.1:3000/_liveness   # expect ok / 200 when healthy
+
+# terminal B — headless Desktop pointed at that relay
+export BD_BUZZ_CMD=/usr/bin/buzz-desktop
+export BUZZ_RELAY_URL=ws://127.0.0.1:3000
+export BUZZ_RELAY_HTTP=http://127.0.0.1:3000
+export BUZZ_AUTO_CONNECT_DEFAULT_RELAY=1
+buzz-desktop-headless start
+buzz-desktop-headless url
+```
+
+### 4) Avoid port clashes (Hermes headless or another stack already on 6080)
+
+Defaults use `:101` / `5911` / `6180` on purpose. To move further:
+
+```bash
+export BD_DISPLAY=102
+export BD_VNC_PORT=5912
+export BD_NOVNC_PORT=6181
+export BD_BUZZ_CMD=/usr/bin/buzz-desktop
+buzz-desktop-headless start
+
+# laptop tunnel must match the new ports:
+# ssh -N -L 6181:127.0.0.1:6181 -L 5912:127.0.0.1:5912 user@server
+```
+
+### 5) Shell wrapper vs real binary
+
+If `~/.local/bin/buzz-desktop` is a **script** that only sets env, force the ELF:
+
+```bash
+# see what PATH resolves
+type -a buzz-desktop
+file "$(command -v buzz-desktop)"
+
+# prefer absolute real binary
+export BD_BUZZ_CMD=/usr/bin/buzz-desktop
+# or
+export BUZZ_DESKTOP_CMD=/usr/local/bin/buzz-desktop
+
+buzz-desktop-headless doctor
+buzz-desktop-headless start
+```
+
+### 6) One-shot env file
+
+```bash
+mkdir -p ~/.config/buzz-desktop-headless
+cat > ~/.config/buzz-desktop-headless/env <<'EOF'
+export BD_BUZZ_CMD=/usr/bin/buzz-desktop
+export BD_DISPLAY=101
+export BD_VNC_PORT=5911
+export BD_NOVNC_PORT=6180
+export BD_BIND=127.0.0.1
+# optional relay:
+# export BUZZ_RELAY_URL=ws://127.0.0.1:3000
+# export BUZZ_AUTO_CONNECT_DEFAULT_RELAY=1
+EOF
+
+set -a
+source ~/.config/buzz-desktop-headless/env
+set +a
+buzz-desktop-headless start
+```
+
+### 7) Prove the install (CI-style / any server)
+
+```bash
+cd buzz-desktop-headless
+
+# no Desktop binary required:
+./scripts/smoke-test.sh
+./scripts/verify-server.sh
+# or: make smoke && make verify
+
+# full GUI path (needs packages + Desktop binary):
+BD_FUNCTIONAL=1 BD_BUZZ_CMD=/usr/bin/buzz-desktop ./scripts/verify-server.sh
+# uses isolated :111 / 5921 / 6190, then stops — safe beside a personal stack
+```
+
+### 8) systemd user service
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp /path/to/buzz-desktop-headless/systemd/buzz-desktop-headless.service \
+  ~/.config/systemd/user/
+
+# optional drop-in for binary + relay
+mkdir -p ~/.config/systemd/user/buzz-desktop-headless.service.d
+cat > ~/.config/systemd/user/buzz-desktop-headless.service.d/override.conf <<'EOF'
+[Service]
+Environment=BD_BUZZ_CMD=/usr/bin/buzz-desktop
+Environment=BD_BIND=127.0.0.1
+# Environment=BUZZ_RELAY_URL=ws://127.0.0.1:3000
+EOF
+
+systemctl --user daemon-reload
+systemctl --user enable --now buzz-desktop-headless.service
+systemctl --user status buzz-desktop-headless.service
+# linger so it survives logout (optional):
+# loginctl enable-linger "$USER"
+```
+
+### 9) Password-protected VNC (non-loopback bind only if you must)
+
+Still prefer SSH. If you bind beyond localhost:
+
+```bash
+mkdir -p ~/.config/buzz-desktop-headless
+x11vnc -storepasswd ~/.config/buzz-desktop-headless/vnc.pass
+
+export BD_VNC_PASSWORD_FILE=~/.config/buzz-desktop-headless/vnc.pass
+export BD_BIND=0.0.0.0          # requires password file
+export BD_BUZZ_CMD=/usr/bin/buzz-desktop
+buzz-desktop-headless start
+# firewall + network policy are your responsibility
+```
+
+### 10) Screenshot + logs when something looks wrong
+
+```bash
+buzz-desktop-headless status
+buzz-desktop-headless screenshot /tmp/buzz-headless.png
+ls -la "${BD_STATE_DIR:-$HOME/.local/state/buzz-desktop-headless}/logs/"
+tail -n 50 "${BD_STATE_DIR:-$HOME/.local/state/buzz-desktop-headless}/logs/buzz-desktop.log"
+tail -n 50 "${BD_STATE_DIR:-$HOME/.local/state/buzz-desktop-headless}/logs/x11vnc.log"
+```
+
+### 11) Two users on one machine (isolated state)
+
+```bash
+# user alice
+export BD_STATE_DIR=$HOME/.local/state/buzz-desktop-headless
+export BD_DISPLAY=101 BD_VNC_PORT=5911 BD_NOVNC_PORT=6180
+buzz-desktop-headless start
+
+# user bob (different ports + state)
+export BD_STATE_DIR=$HOME/.local/state/buzz-desktop-headless
+export BD_DISPLAY=121 BD_VNC_PORT=5931 BD_NOVNC_PORT=6280
+export BD_BUZZ_CMD=/usr/bin/buzz-desktop
+buzz-desktop-headless start
+```
+
+---
+
 ## Architecture
 
 ```text
