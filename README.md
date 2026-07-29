@@ -28,6 +28,41 @@ Same industry pattern as [hermes-desktop-headless](https://github.com/PabloTheTh
 
 ---
 
+## Benefits
+
+Why run Buzz Desktop this way instead of “SSH and hope” or a full remote desktop suite:
+
+| Benefit | What you get |
+|---------|----------------|
+| **No physical monitor** | VPS / bare metal / CI nodes become full Desktop hosts via Xvfb |
+| **Browser access** | Open Desktop from any laptop with SSH + noVNC — no VNC client install required |
+| **One CLI** | `start` / `stop` / `status` / `url` / `screenshot` / `doctor` — not a pile of one-off scripts |
+| **Safe by default** | Binds **127.0.0.1** only; WAN exposure requires an explicit password + bind change |
+| **SSH-native** | Standard tunnel pattern; fits existing bastion / jump-host workflows |
+| **Port-friendly** | Defaults (`:101` / `5911` / `6180`) avoid clashing with common `:99` / `6080` stacks |
+| **Relay-optional** | GUI shell only — attach `BUZZ_RELAY_URL` when you want mesh/backend; skip when you don’t |
+| **Real binary aware** | Resolves the Desktop ELF and skips shell wrappers that only set env |
+| **Provable install** | `verify-server.sh` offline + optional full functional pass on any Linux box |
+| **CI-ready** | GitHub Actions smoke on every push; same checks you run locally |
+| **Multi-user capable** | Per-user state dir + ports so two operators don’t stomp each other |
+| **systemd-friendly** | Drop-in user unit for boot persistence without a logged-in GUI session |
+| **Debuggable** | Built-in screenshot + per-component logs under `$BD_STATE_DIR/logs/` |
+| **Honest scope** | Doesn’t pretend to be a relay, agent runtime, or packaged Desktop binary |
+
+### Who wins
+
+- **Agent / infra operators** — keep Desktop next to the relay and agents on the server, control it from a thin laptop  
+- **Small teams** — share a hardened host over SSH tunnels instead of shipping Desktop configs to every machine  
+- **Homelab / VPS** — full GUI path without GPU monitors, RDP sprawl, or always-on cloud desktops  
+
+### What you deliberately don’t pay for
+
+- No extra remote-desktop license stack  
+- No requirement to expose VNC on the public internet  
+- No coupling to one cloud vendor’s “managed desktop” product  
+
+---
+
 ## Who is this for?
 
 | You… | Use it? |

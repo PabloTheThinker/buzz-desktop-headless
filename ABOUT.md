@@ -22,6 +22,14 @@ Xvfb → WM → Buzz Desktop → x11vnc → noVNC
 
 …behind a single CLI with safe defaults.
 
+### Benefits in plain language
+
+- **Use the real Desktop UI** on a headless box — not a degraded CLI-only substitute  
+- **Open it in a browser** after an SSH tunnel — works from café Wi‑Fi to office laptop  
+- **Keep secrets on the server** — tunnel in; don’t copy agent keys to every personal machine  
+- **Stay boring and safe** — localhost bind, optional password if you leave loopback  
+- **Ship with confidence** — smoke + functional verify scripts match what CI runs  
+
 ## Boundaries (important)
 
 | In scope | Out of scope |
