@@ -1,0 +1,35 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    name: Offline smoke (Ubuntu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install stack packages
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            xvfb x11vnc novnc websockify fluxbox scrot dbus-x11 xdotool
+      - name: bash -n
+        run: |
+          bash -n bin/buzz-desktop-headless
+          bash -n bin/buzz-desktop-headless-stop
+          bash -n lib/common.sh
+          bash -n scripts/install.sh
+          bash -n scripts/smoke-test.sh
+          bash -n scripts/verify-server.sh
+      - name: Offline smoke
+        run: bash scripts/smoke-test.sh
+      - name: Doctor (Desktop may be missing — plan line required)
+        run: |
+          ./bin/buzz-desktop-headless doctor --install-hints | tee /tmp/doctor.txt
+          grep -q 'plan display=' /tmp/doctor.txt
+      - name: Verify-server (offline)
+        run: bash scripts/verify-server.sh

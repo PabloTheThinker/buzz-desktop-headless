@@ -105,6 +105,62 @@ bd_wait_until() {
 
 bd_have() { command -v "$1" >/dev/null 2>&1; }
 
+# Resolve Desktop binary. Prefer absolute BD_BUZZ_CMD / BUZZ_DESKTOP_CMD.
+# Avoid shell wrappers named buzz-desktop when a real binary exists.
+bd_resolve_buzz_cmd() {
+  local c
+  if [[ -n "${BUZZ_DESKTOP_CMD:-}" ]]; then
+    c="$BUZZ_DESKTOP_CMD"
+  elif [[ -n "${BD_BUZZ_CMD:-}" ]]; then
+    c="$BD_BUZZ_CMD"
+  else
+    c="buzz-desktop"
+  fi
+  # If bare name, prefer known real binary paths over a PATH wrapper
+  if [[ "$c" == "buzz-desktop" ]]; then
+    local p
+    for p in /usr/bin/buzz-desktop /usr/local/bin/buzz-desktop \
+             "${HOME}/.local/share/buzz/buzz-desktop" \
+             "${HOME}/.cargo/bin/buzz-desktop"; do
+      if [[ -x "$p" && -f "$p" ]]; then
+        # skip if it's a shell script wrapper (optional heuristic)
+        # Prefer real ELF binary over shell wrappers named buzz-desktop
+        if head -c 4 "$p" 2>/dev/null | grep -aq $'\x7fELF'; then
+          printf '%s\n' "$p"; return 0
+        fi
+      fi
+    done
+  fi
+  if [[ "$c" == /* && -x "$c" ]]; then
+    printf '%s\n' "$c"; return 0
+  fi
+  if command -v "$c" >/dev/null 2>&1; then
+    command -v "$c"; return 0
+  fi
+  return 1
+}
+
+# PIDs for the Desktop client on our DISPLAY (not this CLI).
+bd_buzz_pids_on_display() {
+  local pid disp cmd
+  for pid in $(pgrep -x buzz-desktop 2>/dev/null || true); do
+    disp="$(bd_proc_display "$pid")"
+    if [[ "$disp" == ":${BD_DISPLAY}" || "$disp" == "${BD_DISPLAY}" ]]; then
+      printf '%s\n' "$pid"
+    fi
+  done
+  # absolute-path launches may show different process name
+  for pid in $(pgrep -f '/buzz-desktop( |$)' 2>/dev/null || true); do
+    cmd="$(tr '\0' ' ' </proc/$pid/cmdline 2>/dev/null || true)"
+    [[ "$cmd" == *buzz-desktop-headless* ]] && continue
+    disp="$(bd_proc_display "$pid")"
+    if [[ "$disp" == ":${BD_DISPLAY}" || "$disp" == "${BD_DISPLAY}" ]]; then
+      printf '%s\n' "$pid"
+    fi
+  done | sort -u
+}
+
+
 # ---------------------------------------------------------------------------
 # Distro / dependency resolution
 # ---------------------------------------------------------------------------
@@ -235,11 +291,10 @@ bd_doctor() {
     echo "WARN screenshot tool missing (scrot|import) - optional"
   fi
 
-  if bd_have buzz-desktop; then
-    echo "ok   buzz-desktop -> $(command -v buzz-desktop)"
-    buzz-desktop --version 2>/dev/null || true 2>/dev/null | head -3 || true
+  if buzz_bin="$(bd_resolve_buzz_cmd)"; then
+    echo "ok   buzz-desktop -> $buzz_bin"
   else
-    echo "MISS buzz-desktop binary on PATH"
+    echo "MISS buzz-desktop binary (set BD_BUZZ_CMD or install on PATH)"
     missing=1
   fi
 
@@ -319,37 +374,22 @@ bd_proc_display() {
   tr '\0' '\n' <"$envf" 2>/dev/null | sed -n 's/^DISPLAY=//p' | head -1 || true
 }
 
-bd_kill_electron_on_display() {
-  local pid disp
-  for pid in $(pgrep -f 'buzz-desktop' 2>/dev/null || true); do
-    disp="$(bd_proc_display "$pid")"
-    if [[ "$disp" == ":${BD_DISPLAY}" || "$disp" == "${BD_DISPLAY}" ]]; then
-      bd_log debug "stopping electron pid $pid on DISPLAY=$disp"
-      kill "$pid" 2>/dev/null || true
-    fi
+bd_kill_buzz_on_display() {
+  local pid
+  for pid in $(bd_buzz_pids_on_display); do
+    bd_log debug "stopping buzz-desktop pid $pid on DISPLAY=:${BD_DISPLAY}"
+    kill "$pid" 2>/dev/null || true
   done
   sleep 0.3
-  for pid in $(pgrep -f 'buzz-desktop' 2>/dev/null || true); do
-    disp="$(bd_proc_display "$pid")"
-    if [[ "$disp" == ":${BD_DISPLAY}" || "$disp" == "${BD_DISPLAY}" ]]; then
-      kill -9 "$pid" 2>/dev/null || true
-    fi
+  for pid in $(bd_buzz_pids_on_display); do
+    kill -9 "$pid" 2>/dev/null || true
   done
 }
 
-bd_electron_on_display() {
-  local pid disp
-  for pid in $(pgrep -f 'buzz-desktop' 2>/dev/null || true); do
-    disp="$(bd_proc_display "$pid")"
-    if [[ "$disp" == ":${BD_DISPLAY}" || "$disp" == "${BD_DISPLAY}" ]]; then
-      return 0
-    fi
-  done
-  # Fallback: any Buzz process if our launcher is alive (environ unreadable)
-  if bd_is_alive buzz-desktop && pgrep -f 'buzz-desktop' >/dev/null 2>&1; then
-    return 0
-  fi
-  return 1
+bd_buzz_on_display() {
+  local pid
+  pid="$(bd_buzz_pids_on_display | head -1)"
+  [[ -n "${pid:-}" ]]
 }
 
 # ---------------------------------------------------------------------------
@@ -402,11 +442,13 @@ bd_start_dbus_wm() {
 bd_start_buzz() {
   bd_export_display
   bd_clear_singleton
-  if bd_electron_on_display; then
+  if bd_buzz_on_display; then
     bd_log info "Buzz Desktop already on DISPLAY=:${BD_DISPLAY}"
     return 0
   fi
-  bd_have buzz-desktop || bd_die "buzz-desktop binary not on PATH"
+  local buzz_bin
+  buzz_bin="$(bd_resolve_buzz_cmd)" || bd_die "buzz-desktop binary not found (install Desktop or set BD_BUZZ_CMD)"
+  BD_BUZZ_CMD="$buzz_bin"
 
   local log; log="$(bd_logfile buzz-desktop)"
   # shellcheck disable=SC2086
@@ -429,7 +471,7 @@ bd_start_buzz() {
 
   local i
   for ((i = 1; i <= BD_WAIT_BUZZ_SEC; i++)); do
-    if bd_electron_on_display; then
+    if bd_buzz_on_display; then
       bd_log info "Buzz Desktop running on :${BD_DISPLAY}"
       return 0
     fi
@@ -440,7 +482,7 @@ bd_start_buzz() {
     fi
     sleep 1
   done
-  bd_log error "timeout waiting for Electron - tail $(bd_logfile buzz-desktop):"
+  bd_log error "timeout waiting for Buzz Desktop - tail $(bd_logfile buzz-desktop):"
   tail -n 60 "$log" >&2 || true
   return 1
 }
@@ -532,11 +574,7 @@ SSH tunnel:
 Then open (drag-friendly params already in the URL):
   http://127.0.0.1:${BD_NOVNC_PORT}/vnc.html?$(bd_novnc_query)
 
-Multi-session tiling (video-style):
-  1. Right-click "New session" → Open in split → Right
-  2. Or: Ctrl+T for a new tab; Ctrl+click a session to open as tab
-  3. Drag a session to the chat edge to split (needs resize=remote URL above)
-  CLI without drag:  buzz-desktop-headless split right
+Tip: use the noVNC URL above (resize=remote) for accurate clicks.
 EOF
 }
 
@@ -575,7 +613,7 @@ bd_split() {
   local dir="${1:-right}"
   export DISPLAY=":${BD_DISPLAY}"
   bd_have xdotool || bd_die "xdotool required for 'split' (sudo apt-get install -y xdotool)"
-  bd_electron_on_display || pgrep -f 'buzz-desktop' >/dev/null \
+  bd_buzz_on_display || pgrep -f 'buzz-desktop' >/dev/null \
     || bd_die "Buzz Desktop is not running — start first"
 
   local wid
@@ -677,7 +715,7 @@ bd_start() {
 bd_stop() {
   bd_mkdirs
   bd_kill_pidfile buzz-desktop
-  bd_kill_electron_on_display
+  bd_kill_buzz_on_display
   bd_kill_pidfile novnc
   bd_kill_pidfile x11vnc
   bd_kill_pidfile wm
@@ -708,11 +746,11 @@ bd_status() {
       fi
     fi
   done
-  if bd_electron_on_display; then
-    echo "UP   electron DISPLAY=:${BD_DISPLAY}"
-    pgrep -af 'buzz-desktop' | head -3 || true
+  if bd_buzz_on_display; then
+    echo "UP   desktop DISPLAY=:${BD_DISPLAY}"
+    bd_buzz_pids_on_display | head -5 | while read -r _p; do ps -p "$_p" -o pid=,args= 2>/dev/null; done || true
   else
-    echo "DOWN electron"
+    echo "DOWN desktop"
   fi
   if [[ -e "/tmp/.X11-unix/X${BD_DISPLAY}" ]]; then
     echo "X socket :$BD_DISPLAY present"
